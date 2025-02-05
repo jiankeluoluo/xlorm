@@ -6,9 +6,9 @@ XLORM 是一个专为 Go 语言设计的高性能、易用性强的轻量级 ORM
 
 **XLORM 由Windsurf AI功能命令式生成，并由DeepSeek R1进行代码审核、评估、提出性能优化建议。**
 
-[中文版](https://github.com/jiankeluoluo/xlorm/README_ZH.md "访问中文版")
+[中文版](README_ZH.md "访问中文版")
 
-[English](https://github.com/jiankeluoluo/xlorm/README.md "Access English Version")
+[English](README.md "Access English Version")
 
 ## 主要特性
 
