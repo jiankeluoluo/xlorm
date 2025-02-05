@@ -1,5 +1,9 @@
 # XLORM Builder 方法文档
 
+[中文版](BUILDER_METHODS_ZH.md "访问中文版")
+
+[English](BUILDER_METHODS_EN.md "Access English Version")
+
 ## 创建构建器
 
 ### NewBuilder
