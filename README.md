@@ -56,7 +56,7 @@ XLORM 是一个专为 Go 语言设计的高性能、易用性强的轻量级 ORM
 
 ```bash
 go get github.com/go-sql-driver/mysql
-go get github.com/your_username/xlorm
+go get github.com/jiankeluoluo/xlorm
 ```
 
 ## 快速开始
