@@ -1,5 +1,9 @@
 # XLORM Table 方法文档
 
+[中文版](TABLE_METHODS_ZH.md "访问中文版")
+
+[English](TABLE_METHODS_EN.md "Access English Version")
+
 ## 查询条件方法
 
 ### Where
