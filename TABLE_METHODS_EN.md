@@ -1,5 +1,9 @@
 # XLORM Table Methods Documentation
 
+[中文版](TABLE_METHODS_ZH.md "访问中文版")
+
+[English](TABLE_METHODS_EN.md "Access English Version")
+
 ## Query Condition Methods
 
 ### Where
