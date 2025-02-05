@@ -59,7 +59,7 @@ XLORM is a high-performance, easy-to-use lightweight ORM framework designed spec
 
 ```bash
 go get github.com/go-sql-driver/mysql
-go get github.com/your_username/xlorm
+go get github.com/jiankeluoluo/xlorm
 ```
 
 ## Quick Start
