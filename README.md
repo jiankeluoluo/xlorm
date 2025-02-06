@@ -138,6 +138,25 @@ result, err := xdb.M("users").
     Where("id = ?", 1).
     Fields("id, name, age").
     Find()
+
+users := db.M("users").
+    NotWhere("status = ?", "banned").
+    Find()
+// SQL: SELECT * FROM users WHERE NOT (status = 'banned')
+
+users := db.M("users").
+    Where("age > ?", 18).
+    NotWhere("status = ?", "banned").
+    OrWhere("vip = ?", true).
+    Find()
+// SQL: SELECT * FROM users WHERE (age > 18 AND NOT (status = 'banned')) OR vip = true
+
+products := db.M("products").
+    Where("category = ?", "electronics").
+    NotWhere("price < ?", 100).
+    OrWhere("discount > ?", 0.5).
+    Find()
+// SQL: SELECT * FROM products WHERE (category = 'electronics' AND NOT (price < 100)) OR discount > 0.5
 ```
 
 #### 2.2 Query Multiple Records
@@ -149,6 +168,25 @@ results, err := xdb.M("users").
     OrderBy("age DESC").
     Limit(10).
     FindAll()
+
+users := db.M("users").
+    NotWhere("status = ?", "banned").
+    FindAll()
+// SQL: SELECT * FROM users WHERE NOT (status = 'banned')
+
+users := db.M("users").
+    Where("age > ?", 18).
+    NotWhere("status = ?", "banned").
+    OrWhere("vip = ?", true).
+    FindAll()
+// SQL: SELECT * FROM users WHERE (age > 18 AND NOT (status = 'banned')) OR vip = true
+
+products := db.M("products").
+    Where("category = ?", "electronics").
+    NotWhere("price < ?", 100).
+    OrWhere("discount > ?", 0.5).
+    FindAll()
+// SQL: SELECT * FROM products WHERE (category = 'electronics' AND NOT (price < 100)) OR discount > 0.5
 ```
 
 #### 2.3 Pagination Query

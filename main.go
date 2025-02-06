@@ -7,10 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	_ "net/http/pprof"
-	"xlorm/db"
-
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jiankeluoluo/xlorm/db"
 )
 
 func main() {
@@ -55,18 +53,6 @@ func main() {
 	// var m runtime.MemStats
 	// runtime.ReadMemStats(&m)
 	// fmt.Printf("Alloc = %v \n", m.Alloc)
-
-	// // err = e.Close()
-	// // if err != nil {
-	// // 	fmt.Println(err)
-	// // }
-
-	// for {
-	// 	time.Sleep(time.Second)
-	// 	var n runtime.MemStats
-	// 	runtime.ReadMemStats(&n)
-	// 	fmt.Printf("Alloc = %v \n", n.Alloc)
-	// }
 }
 
 // 测试日志
