@@ -8,8 +8,16 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+)
+
+// 条件位标记常量
+const (
+	condAND uint64 = 1 << iota // AND 条件
+	condOR                     // OR 条件
+	condNOT                    // NOT 条件
 )
 
 var safeOrderBy = regexp.MustCompile(`^[a-zA-Z0-9_, ]+$`)
@@ -29,6 +37,10 @@ type Table struct {
 	limit     int64
 	offset    int64
 	hasTotal  bool // 是否需要获取总数
+
+	// 新增位运算相关字段
+	conditionFlags uint64
+	conditionIndex int
 }
 
 // Release 释放Table对象到池中
@@ -55,9 +67,11 @@ func (t *Table) Reset() {
 	t.joins = nil
 	t.hasTotal = false
 	t.total = 0
-}
 
-// ========== 表操作相关公开方法 ==========
+	// 重置新增字段
+	t.conditionFlags = 0
+	t.conditionIndex = 0
+}
 
 // Where 添加查询条件
 func (t *Table) Where(condition string, args ...interface{}) *Table {
@@ -82,8 +96,78 @@ func (t *Table) Where(condition string, args ...interface{}) *Table {
 
 	t.where = append(t.where, condition)
 	t.args = append(t.args, args...)
-	return t
 
+	// 更新位标记和索引
+	if t.conditionIndex == 0 {
+		t.conditionFlags |= condAND // 第一个条件默认为 AND
+	}
+	t.conditionIndex++
+
+	return t
+}
+
+// OrWhere 添加 OR 查询条件
+func (t *Table) OrWhere(condition string, args ...interface{}) *Table {
+	if condition == "" {
+		return t
+	}
+
+	// 增强校验：检查是否有未参数化的值
+	if strings.Count(condition, "?") != len(args) {
+		t.db.logger.Error("条件参数数量不匹配",
+			"condition", condition,
+			"args_count", len(args),
+		)
+		return t
+	}
+
+	// 检查SQL注入
+	if strings.ContainsAny(condition, ";\x00") {
+		t.db.logger.Error("检测到可能的SQL注入尝试", "condition", condition)
+		return t
+	}
+
+	t.where = append(t.where, condition)
+	t.args = append(t.args, args...)
+
+	// 更新位标记和索引
+	t.conditionFlags |= condOR
+	t.conditionIndex++
+
+	return t
+}
+
+// NotWhere 添加 NOT 查询条件
+func (t *Table) NotWhere(condition string, args ...interface{}) *Table {
+	if condition == "" {
+		return t
+	}
+
+	// 增强校验：检查是否有未参数化的值
+	if strings.Count(condition, "?") != len(args) {
+		t.db.logger.Error("条件参数数量不匹配",
+			"condition", condition,
+			"args_count", len(args),
+		)
+		return t
+	}
+
+	// 检查SQL注入
+	if strings.ContainsAny(condition, ";\x00") {
+		t.db.logger.Error("检测到可能的SQL注入尝试", "condition", condition)
+		return t
+	}
+
+	// 为 NOT 条件添加 NOT 前缀
+	notCondition := "NOT (" + condition + ")"
+	t.where = append(t.where, notCondition)
+	t.args = append(t.args, args...)
+
+	// 更新位标记和索引
+	t.conditionFlags |= condNOT
+	t.conditionIndex++
+
+	return t
 }
 
 // OrderBy 添加排序条件
@@ -503,14 +587,10 @@ func (t *Table) insert(ctx context.Context, data interface{}, insertType string)
 		return 0, errors.New("插入的数据不能为空，字段名为空")
 	}
 
-	// 构建SQL语句
-	var sql strings.Builder
-	sql.WriteString(fmt.Sprintf("%s INTO %s (`", insertType, t.tableName))
-	sql.WriteString(strings.Join(fields, "`,`"))
-	sql.WriteString("`) VALUES ")
-	sql.WriteString(strings.Join(t.buildPlaceholders(len(fields), 1), ","))
-
-	query := sql.String()
+	query, err := t.buildInsertSQL(insertType, fields)
+	if err != nil {
+		return 0, err
+	}
 
 	if t.db.IsDebug() {
 		t.db.logger.Debug("执行SQL", "insert", query, "args", values)
@@ -553,21 +633,11 @@ func (t *Table) update(ctx context.Context, data interface{}) (int64, error) {
 		return 0, err
 	}
 
-	// 检查是否有 WHERE 子句
-	whereClause, whereArgs := t.GetWhere()
-	if whereClause == "" {
-		t.db.logger.Warn("更新操作未指定 WHERE 条件，拒绝执行")
-		return 0, fmt.Errorf("更新操作必须指定 WHERE 条件")
-	}
-
-	// 构建SET子句
-	setClause := make([]string, len(fields))
-	for i, field := range fields {
-		setClause[i] = fmt.Sprintf("`%s` = ?", field) //已经转义过，请勿重复转义
-	}
-
 	// 构建SQL语句
-	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s", t.tableName, strings.Join(setClause, ","), whereClause)
+	query, whereArgs, err := t.buildUpdateSQL(fields)
+	if err != nil {
+		return 0, err
+	}
 
 	// 合并参数
 	args := append(values, whereArgs...)
@@ -631,8 +701,52 @@ func (t *Table) delete(ctx context.Context) (int64, error) {
 }
 
 // GetWhere 获取WHERE子句
-func (t *Table) GetWhere() (string, []interface{}) {
-	return strings.Join(t.where, " AND "), t.args
+func (t *Table) GetWhere(addPreStr bool) (string, []interface{}) {
+	// 添加条件
+	if len(t.where) > 0 {
+		// 预估SQL长度，避免频繁扩容
+		query := strings.Builder{}
+		query.Grow(256)
+
+		if addPreStr {
+			query.WriteString(" WHERE ")
+		}
+
+		// 使用位运算快速判断条件类型
+		switch {
+		case t.conditionFlags&condOR != 0:
+			// 存在 OR 条件，使用括号确保正确性
+			query.WriteByte('(')
+			for i, condition := range t.where {
+				if i > 0 {
+					query.WriteString(" OR ")
+				}
+				query.WriteString(condition)
+			}
+			query.WriteByte(')')
+
+		case t.conditionFlags&condNOT != 0:
+			// 存在 NOT 条件，使用括号确保正确性
+			query.WriteByte('(')
+			for i, condition := range t.where {
+				if i > 0 {
+					query.WriteString(" AND ")
+				}
+				query.WriteString(condition)
+			}
+			query.WriteByte(')')
+
+		default:
+			// 纯 AND 条件，直接连接
+			query.WriteString(strings.Join(t.where, " AND "))
+		}
+		// 重置条件标志（重要！）
+		t.conditionFlags = 0
+		t.conditionIndex = 0
+		return query.String(), t.args
+	}
+
+	return "", nil
 }
 
 // buildQuery 构建查询语句
@@ -642,9 +756,6 @@ func (t *Table) buildQuery(queryType string) (string, []interface{}) {
 	query.Grow(256)
 
 	var args []interface{}
-	if len(t.args) > 0 {
-		args = make([]interface{}, 0, len(t.args))
-	}
 
 	// 构建基础查询
 	switch queryType {
@@ -681,9 +792,12 @@ func (t *Table) buildQuery(queryType string) (string, []interface{}) {
 
 	// 添加条件
 	if len(t.where) > 0 {
-		query.WriteString(" WHERE ")
-		query.WriteString(strings.Join(t.where, " AND "))
-		args = append(args, t.args...)
+		whereString, whereArgs := t.GetWhere(true)
+		if whereString != "" {
+			args = make([]interface{}, 0, len(whereArgs))
+			query.WriteString(whereString)
+			args = append(args, whereArgs...)
+		}
 	}
 
 	// 添加分组
@@ -705,12 +819,12 @@ func (t *Table) buildQuery(queryType string) (string, []interface{}) {
 
 	// 添加限制和偏移
 	if t.limit > 0 {
-		query.WriteString(" LIMIT ?")
-		args = append(args, t.limit)
+		query.WriteString(" LIMIT ")
+		query.WriteString(strconv.FormatInt(t.limit, 10))
 
 		if t.offset > 0 {
-			query.WriteString(" OFFSET ?")
-			args = append(args, t.offset)
+			query.WriteString(" OFFSET ")
+			query.WriteString(strconv.FormatInt(t.offset, 10))
 		}
 	}
 
@@ -858,4 +972,51 @@ func (t *Table) copyQueryConditions(target *Table) {
 
 	target.groupBy = t.groupBy
 	target.having = t.having
+}
+
+// 生成插入SQL语句
+func (t *Table) buildInsertSQL(insertType string, fields []string) (string, error) {
+	if len(fields) == 0 {
+		return "", fmt.Errorf("插入的数据不能为空")
+	}
+	// 构建插入SQL语句
+	var sql strings.Builder
+	sql.WriteString(insertType)
+	sql.WriteString(" INTO ")
+	sql.WriteString(t.tableName)
+	sql.WriteString(" (`")
+	sql.WriteString(strings.Join(fields, "`,`"))
+	sql.WriteString("`) VALUES ")
+	sql.WriteString(strings.Join(t.buildPlaceholders(len(fields), 1), ","))
+	return sql.String(), nil
+}
+
+// buildUpdateSQL 构建更新SQL语句
+func (t *Table) buildUpdateSQL(fields []string) (string, []interface{}, error) {
+
+	if len(fields) == 0 {
+		return "", nil, fmt.Errorf("更新操作必须指定字段")
+	}
+
+	whereClause, whereArgs := t.GetWhere(true)
+	if whereClause == "" {
+		t.db.logger.Warn("更新操作未指定 WHERE 条件，拒绝执行")
+		return "", nil, fmt.Errorf("更新操作必须指定 WHERE 条件")
+	}
+
+	// 构建SET子句
+	var clause strings.Builder
+	for _, field := range fields {
+		clause.WriteString("`")
+		clause.WriteString(field)
+		clause.WriteString("` = ?,")
+	}
+
+	var sql strings.Builder
+	sql.WriteString("UPDATE ")
+	sql.WriteString(t.tableName)
+	sql.WriteString(" SET ")
+	sql.WriteString(strings.TrimSuffix(clause.String(), ","))
+	sql.WriteString(whereClause)
+	return sql.String(), whereArgs, nil
 }
